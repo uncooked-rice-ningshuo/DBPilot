@@ -1,0 +1,94 @@
+{
+  "name": "dbpilot",
+  "version": "0.1.0-dev",
+  "description": "A local-first database workbench with a controlled AI assistant",
+  "private": true,
+  "type": "module",
+  "main": "apps/desktop/main.mjs",
+  "scripts": {
+    "dev:server": "tsx watch scripts/dev-server.mjs",
+    "dev:web": "vite --config apps/web/vite.config.ts",
+    "build": "tsc --noEmit && vite build --config apps/web/vite.config.ts && tsc -p tsconfig.server.json && node scripts/copy-runtime.mjs",
+    "start:server": "node dist/server/apps/server/src/index.js",
+    "desktop": "pnpm build && pnpm desktop:native && electron .",
+    "pack:mac": "pnpm build && pnpm desktop:native darwin arm64 && electron-builder --mac dmg --arm64",
+    "pack:win": "pnpm build && pnpm desktop:native win32 x64 && electron-builder --win nsis --x64",
+    "test": "vitest run",
+    "desktop:native": "node scripts/prepare-desktop-native.mjs"
+  },
+  "dependencies": {
+    "@fastify/cors": "^11.0.0",
+    "@fastify/static": "^8.3.0",
+    "@iconify-icons/lucide": "^2.0.16",
+    "@iconify/react": "^6.0.2",
+    "@tanstack/react-table": "^8.21.3",
+    "@tanstack/react-virtual": "^3.14.13",
+    "better-sqlite3": "^12.2.0",
+    "class-variance-authority": "^0.7.1",
+    "cn": "^0.4.0",
+    "fastify": "^5.5.0",
+    "monaco-editor": "^0.52.2",
+    "mysql2": "^3.14.0",
+    "pg": "^8.16.0",
+    "radix-ui": "^1.7.0",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1",
+    "sonner": "2.0.8",
+    "ssh2": "^1.17.0",
+    "zod": "^4.1.0"
+  },
+  "devDependencies": {
+    "@electron/rebuild": "4.2.0",
+    "@tailwindcss/vite": "^4.3.3",
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^22.18.0",
+    "@types/pg": "^8.15.0",
+    "@types/react": "^19.1.0",
+    "@types/react-dom": "^19.1.0",
+    "@types/ssh2": "^1.15.6",
+    "@vitejs/plugin-react": "^5.0.0",
+    "electron": "44.5.1",
+    "electron-builder": "26.15.3",
+    "shadcn": "^3.8.5",
+    "tailwindcss": "^4.3.3",
+    "tsx": "^4.20.0",
+    "typescript": "^5.9.0",
+    "vite": "^7.1.0",
+    "vitest": "^3.2.0"
+  },
+  "packageManager": "pnpm@10.26.0",
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "better-sqlite3",
+      "esbuild",
+      "electron"
+    ]
+  },
+  "build": {
+    "appId": "com.dbpilot.app",
+    "productName": "DBPilot",
+    "files": [
+      "dist/server/**/*",
+      "dist/web/**/*",
+      "apps/desktop/**/*",
+      "package.json"
+    ],
+    "asarUnpack": [
+      "**/*.node"
+    ],
+    "mac": {
+      "target": [
+        "dmg"
+      ],
+      "category": "public.app-category.developer-tools"
+    },
+    "win": {
+      "target": [
+        "nsis"
+      ]
+    },
+    "npmRebuild": false
+  }
+}

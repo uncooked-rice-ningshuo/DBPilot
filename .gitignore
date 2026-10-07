@@ -1,0 +1,9 @@
+node_modules/
+.pnpm-store/
+.data/
+dist/
+.env
+.DS_Store
+.playwright-cli/
+output/playwright/
+output/desktop-pack/

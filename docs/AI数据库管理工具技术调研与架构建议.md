@@ -6,9 +6,15 @@
 
 > 结论预览  推荐采用「共享 Web UI + TypeScript Core Service + Electron 桌面壳 + Server Runtime」的双运行时架构。桌面端由 Electron Main/本地 Node 服务直接使用数据库原生驱动；Web 端通过服务端 API 代理数据库连接。AI 层优先使用原生 TypeScript fetch/SDK + Tool Calling，不强依赖 LangChain；MCP 作为对外 Agent 接口而不是内部必选总线。
 
+架构补充日期：2026-10-06。本次落实个人无账号部署、macOS/Windows、三库首发、可配置 DeepSeek、命令规则、多命令确认与模型直接分析结果，原同类产品调研日期保持不变。
+
 文档包含：同类开源工具分析、技术栈/协议清单、架构选型、AI 接入方式、远程连接、安全模型、部署方式及 MVP 路线图。
 
 ## 1. 项目目标与关键约束
+
+已确认首版为个人单用户工具：支持本地部署及服务器自托管，不实现注册、登录、多人、角色或团队共享。桌面优先 macOS 和 Windows；首发数据库为 MySQL、SQLite、PostgreSQL，MongoDB 暂不做。AI 首发适配 DeepSeek，模型地址、型号和 API Key 可配置，后续扩展 MiniMax、豆包、千问。查询结果可直接交给模型分析，首版不做业务数据脱敏。
+
+同类产品中的团队权限和治理能力保留为调研事实，不表示 DBPilot 首版需要实现这些能力。
 
 你要做的并不是一个单纯的 SQL 编辑器，而是一个可以在本地桌面与服务器 Web 两种形态运行的 AI-native 数据库工作台。架构设计的核心，是把 UI、数据库连接能力、AI Agent 能力和部署形态解耦。
 
@@ -90,11 +96,11 @@ Mako 的公开架构采用 React + Vite 前端、Hono + Node.js API、多个数�
 
 ## 3. 建议的总体技术架构
 
-> 推荐主线  React（或 Vue）共享 UI + TypeScript Core + Electron Desktop + Node Server。Python 仅作为可选能力进程，用于模型推理、Notebook、复杂数据科学任务；不要让 Python 成为 Web/Desktop 两套代码之间的强制中间层。
+> 推荐主线  React + shadcn/ui 共享 UI + TypeScript Core + Electron Desktop + Node Server。Python 仅作为可选能力进程，用于模型推理、Notebook、复杂数据科学任务；不要让 Python 成为 Web/Desktop 两套代码之间的强制中间层。
 
 ```text
 ┌──────────────────────── Shared UI ────────────────────────┐
-│ React/Vue + TypeScript + Monaco + DataGrid + AI Chat     │
+│ React + TypeScript + Monaco + DataGrid + AI Chat     │
 └───────────────┬───────────────────────┬──────────────────┘
                 │                       │
         Desktop Runtime             Web Runtime
@@ -122,12 +128,15 @@ Optional: MCP Server (stdio locally / Streamable HTTP remotely)
 
 | 模块 | 推荐技术 | 理由 |
 | --- | --- | --- |
-| 框架 | React + TypeScript（或继续使用熟悉的 Vue 3） | 两者都适合 Web/Electron 共用；React 在 AI SDK/数据工具生态稍丰富 |
+| 框架 | React + TypeScript | 采用 shadcn/ui 官方 React 路线，Web/Electron 共用 |
+| UI 组件 | shadcn/ui + Tailwind CSS | 已确认；组件代码与主题集中维护 |
 | 构建 | Vite | 桌面与 Web 都轻量，Electron 集成成熟 |
 | SQL Editor | Monaco Editor | 语法高亮、补全、快捷键和大文本处理成熟 |
-| 结果表格 | AG Grid / TanStack Table + 虚拟列表 | 数据库结果需要列固定、虚拟滚动、复制、筛选 |
-| 状态管理 | Zustand / Pinia | 保持 UI 状态简单，不与数据库连接生命周期混杂 |
+| 结果表格 | TanStack Table/Virtual + shadcn/ui 样式 | 数据库结果需要列固定、虚拟滚动、复制、筛选 |
+| 状态管理 | Zustand | 保持 UI 状态简单，不与数据库连接生命周期混杂 |
 | 请求层 | fetch + typed API client | 尽量保持原生；SSE 可直接读取 ReadableStream |
+
+UI 层已确定采用 [shadcn/ui](https://ui.shadcn.com/)。基础组件、主题和样式统一放入 `packages/ui`，由 Web 与桌面端共享；业务页面在工作区层组合。shadcn/ui 提供可定制的组件代码，参见[官方介绍](https://ui.shadcn.com/docs)。SQL 编辑器仍使用 Monaco，结果网格由 TanStack Table/Virtual 提供表格状态及虚拟化，具体布局和视觉设计后续确定。
 
 ### 3.2 Core Server / Desktop Core
 
@@ -201,25 +210,41 @@ interface DatabaseTool {
 }
 
 AI loop:
-User → collect schema context → LLM → tool_call
+User → LLM → discover/connect database tools
+→ collect schema context → LLM → tool_call
 → policy/approval → execute DB tool → tool_result → LLM → answer
 ```
 
-AI 定位为对话式、工具驱动的数据库 Agent，采用单 Agent + 多个受控工具。用户以自然语言提出任务，Agent 理解需求、检索 Schema、制定步骤、生成 SQL、检查风险、取得必要确认、执行并解释结果；信息不足时追问，修改后的 SQL 重新经过执行策略。
+AI 定位为工作区级、对话式、工具驱动的数据库 Agent，采用单 Agent + 多个受控工具。用户以自然语言提出任务，Agent 理解需求、检索 Schema、制定步骤、生成 SQL、检查风险、取得必要确认、执行并解释结果；信息不足时追问，修改后的 SQL 重新经过执行策略。
 
 同一 Agent 提供建议模式与执行模式：建议模式仅解释、生成或修改 SQL；执行模式在授权范围内调用数据库工具。用户既可手写 SQL，也可让 AI 修改已有 SQL，再选择自行执行或交由 Agent 执行。模式切换不自动授权或执行旧草稿，首版无需多 Agent。
+
+AI 不局限于当前表，也不要求用户先手动选择连接。左侧选中连接、中间打开的表或 SQL 只是可选上下文；Agent 的边界是预封装工具、用户资源权限和执行策略。任务明确且已获授权时，可自行发现连接、建立会话、检索表、编写并执行 SQL，再输出结论。
+
+例如“连接远端测试库，找到订单和客户表，统计最近一个月各客户的订单金额”，Agent 依次调用连接发现、建立、Schema 检索和查询工具。目标有歧义或缺少连接配置时再询问；凭据通过专用配置入口补充，不要求用户将密码写入对话。AI 可通过专用工具新建或修改连接配置，也可使用已保存连接；敏感配置草拟后由用户确认触发保存，凭据通过专用输入保存。
+
+工具由开发者预先封装为函数、固定 CLI 命令或受控服务接口，并注册输入输出 Schema、权限、副作用、超时与处理函数。Agent 决定调用哪些工具和执行顺序，不能自行注册工具或执行任意 shell。命令适配器使用固定可执行文件和经过校验的参数数组，执行前统一鉴权、审批和审计。
+
+一个任务可依次操作多个授权连接；每步显式绑定 Runtime、工作区及连接标识，结果保留来源。切换界面当前表不改变执行目标。跨连接任务不代表分布式事务，也不自动允许跨库复制数据；写入目的库需独立授权，失败时如实报告部分完成。
+
+本地/远端数据库的位置与 Local/Server Runtime 是两种概念。首版在同一个 Runtime 内编排多个网络可达的连接；跨 Runtime 单任务需后续受信路由及逐端认证，不通过 UI 切换隐式实现，Server 也不能直接读取用户电脑的数据库文件。
 
 ### 5.1 推荐的 AI Tool 集合
 
 | Tool | 职责 | 默认权限 |
 | --- | --- | --- |
-| list_connections | 列出可用连接（不泄露密码） | 只读 |
+| list_connections | 按名称、环境、引擎查找已配置且授权的连接，不泄露密码 | 资源可见权限 |
+| connect_database | 根据明确连接标识建立本地或远端数据库会话 | connect 权限、网络策略及配额 |
+| get_connection_status | 查看授权连接状态及能力 | 资源可见权限 |
+| create_connection / update_connection | 草拟并保存新配置或修改旧配置 | 默认需用户确认，Secret 由专用输入提交 |
+| disconnect_database | 释放当前任务自身的连接租约 | 不影响其他任务 |
 | get_schema / search_schema | 按需读取 database/schema/table/column/index | 只读 |
 | generate_sql | 生成新 SQL 或修改用户已有 SQL | 无执行权限 |
 | explain_query | 生成执行计划；ANALYZE 按真实执行风险控制 | 只读/受控 |
-| run_select | 只允许 SELECT / SHOW / DESCRIBE 等 | 按策略授权或确认，限制行数/超时 |
-| run_mutation | INSERT/UPDATE/DELETE | 写权限 + 明确计划 + 必要确认 |
-| run_ddl | CREATE/ALTER/DROP | 结构变更权限 + 明确确认 |
+| run_select | 已校验只读查询 | 默认展示后确认；用户可配置自动规则 |
+| run_mutation | INSERT/UPDATE/DELETE | 默认 ask，按用户命令规则及数据库权限执行 |
+| run_ddl | CREATE/ALTER/DROP | 默认 ask，按用户命令规则及数据库权限执行 |
+| execute_plan | 执行单条或多命令计划 | 逐条求值 allow/ask/deny，ask 组一次确认 |
 | cancel_query | 取消当前执行 | 允许 |
 | export_result | 导出 CSV/JSON/Parquet | 按文件权限 |
 
@@ -239,11 +264,25 @@ AI 定位为对话式、工具驱动的数据库 Agent，采用单 Agent + 多�
 
 ### 5.4 数据库操作能力与统一执行入口
 
-系统应支持查询、新增、修改、删除数据，以及按数据库能力开放的表、字段、索引创建、修改和删除。只读是权限配置，不是 AI 能力上限。SQL 脚本、交互事务、用户授权及实例管理按具体能力逐项开放，管理操作使用独立权限。
+系统应支持查询、新增、修改、删除数据，以及按数据库能力开放的表、字段、索引创建、修改和删除。只读是权限配置，不是 AI 能力上限。首版支持多条 SQL/函数命令组成计划，按组执行或拒绝；跨请求长期事务 UI、数据库用户授权及实例管理按需扩展，不为多命令执行引入应用账号系统。
 
 用户手写 SQL、AI 生成或修改 SQL、后续界面数据编辑，统一进入执行计划、权限与风险检查、必要确认、数据库执行和审计链路。AI 与人工入口不能绕过同一策略。具体页面布局和 UI 功能细节暂不展开。
 
 例如给订单表添加备注字段并查询缺少备注的订单，Agent 拆分结构变更与查询，展示目标、SQL 和影响；获授权后逐步执行，结构变更后刷新 Schema。后续步骤失败时报告部分完成，不自动重放已完成的写入。
+
+### 5.5 命令规则与多命令确认
+
+用户配置 allow（自动执行）、ask（点击执行或拒绝）、deny（禁止）规则，Agent 不能修改规则。默认允许查找已有连接、连接状态及 Schema 元数据工具；SQL 默认 ask，用户可以明确放行某个连接或操作范围。新建/修改连接和敏感操作默认由用户确认触发。规则匹配实际参数、目标与 SQL 类型，不能只匹配命令前缀。
+
+多命令计划逐条判断，需确认时展示完整命令组及顺序，用户一次确认后执行该组确定的命令。deny 不可通过组确认绕过；依赖前一步结果才能生成的新命令另行求值。修改或新增命令后重新检查，需要确认则再次等待；拒绝后停止该组及依赖步骤。人工点击执行所展示脚本即是执行请求，不机械重复询问。
+
+底层按方言解析语句边界，逐条调度，不用简单分号切割或无检查地透传脚本。一次批准不等于一个数据库事务；默认失败停止，记录已成功、失败、未执行和结果未知的步骤，不重放已提交写入。已验证的显式事务块使用同一连接处理，用户无需先学习事务即可执行命令组。
+
+### 5.6 DeepSeek 与结果分析
+
+首版实现可配置的 DeepSeek Provider，保存 baseUrl、modelId、apiKeyRef、超时与预算；以集成时最新可用且通过测试的模型为默认，不在业务逻辑写死型号。Run 固定配置快照；未来 MiniMax、豆包、千问分别验证协议和工具能力。参考 [DeepSeek 官方 API 文档](https://api-docs.deepseek.com/zh-cn/)。
+
+查询结果直接交给配置的模型分析，不增加业务数据脱敏或逐次出站确认。保留行数、字节和 token 限额并明确截断状态，不能把部分结果冒充完整统计。DB 密码、SSH 私钥和模型 key 等配置凭据不发送给模型、不写入普通日志；结果中的文本不能改变命令规则或批准操作。
 
 ## 6. 数据库 Driver 抽象建议
 
@@ -292,7 +331,7 @@ Adapter 必须返回统一结果模型，但不要过度“抹平”数据库特
 
 ### 7.3 TLS 与证书
 
-数据库连接 Profile 应统一保存 sslMode、CA certificate、client certificate、client private key、serverName 等字段。服务端 Web 模式还应强制 UI ↔ Server 使用 HTTPS，并对 session/token 做过期和撤销。
+数据库连接 Profile 应统一保存 sslMode、CA certificate、client certificate、client private key、serverName 等字段。服务端远程访问采用 HTTPS 或受控隧道；应用无账号登录，默认 loopback 监听，远程访问保护由个人部署通道承担。
 
 ## 8. 安全模型：AI 数据库工具必须从第一版考虑
 
@@ -301,13 +340,13 @@ Adapter 必须返回统一结果模型，但不要过度“抹平”数据库特
 | AI 误执行 DELETE/DROP | SQL 分类 + 分级授权 + 必要确认；只读为可选策略，DML/DDL 受对应权限控制 |
 | Prompt injection 诱导读取敏感表 | 连接/Schema/表级 Allowlist；AI tool 层再次鉴权 |
 | 数据库密码泄露给模型 | Prompt 永远不包含密码；连接凭据仅在 Core 中使用 |
-| SQL 返回数据泄露 | 可配置敏感列 mask；发送给 LLM 前再做数据裁剪/脱敏 |
-| Web 用户越权 | Server Core 做 RBAC，不信任前端传来的 connectionId 权限 |
+| 模型分析结果不完整 | 允许结果原值进入模型；大小截断明确标记，不脱敏业务数据 |
+| 非预期调用或确认伪造 | 无账号单用户；部署层限制访问，Core 校验来源、命令规则及确认计划 |
 | Electron RCE | contextIsolation=true；nodeIntegration=false；contextBridge 白名单 API |
 | MCP 远程暴露 | Streamable HTTP 必须认证、校验 Origin，并限定工具权限 |
 | 审计缺失 | 记录 AI 请求、tool call、SQL、连接、用户、结果元信息与错误 |
 
-执行策略综合操作者、目标环境、数据库账号权限、语句类型和影响范围判断。查询可按策略直接执行或确认；DML 需写权限，DDL 需结构变更权限，无条件 UPDATE/DELETE、DROP 等需更严格授权。影响行数预估仅供参考，不能保证执行时数据未变化。
+执行策略由个人用户配置，按工具、目标、SQL 类型及参数约束判断 allow/ask/deny。SQL 默认展示后由用户执行或拒绝，可显式配置自动范围；敏感命令默认确认。数据库账号权限仍是上限，影响行数预估不保证执行时数据未变化。
 
 确认不能提升用户或数据库账号权限。审批绑定确切 SQL、参数、目标及配置版本，变更后重新审批；只读工具不能执行写入 CTE 或有副作用操作。未知语句拒绝执行。事务、DDL 回滚能力按方言声明，已提交或不可回滚操作不能承诺撤销；提交后断线时报告结果未知，不自动重试。
 
@@ -335,7 +374,7 @@ Browser
 Reverse Proxy (Nginx/Caddy)
    │
 AI DB Server (Node/TS)
-   ├─ API/Auth/RBAC/Audit
+   ├─ API/CommandPolicy/ExecutionLog
    ├─ DB drivers + pools + SSH
    ├─ AI agent/tools
    └─ metadata DB (Postgres/SQLite)
@@ -343,21 +382,21 @@ AI DB Server (Node/TS)
 Docker Compose → later Kubernetes if needed
 ```
 
-MVP 自托管建议 Docker Compose：app + metadata database（可先 SQLite/Postgres）即可。无需一开始拆成微服务。
+MVP 自托管使用单实例应用与 SQLite 持久卷，可用 Docker Compose；无账号、登录或多人模式。默认 loopback 监听，远程访问通过个人受控网络、隧道或部署层保护。
 
 ### 9.3 Desktop 连接 Remote Server
 
-这是非常值得支持的一种模式：Electron UI 可以切换 RuntimeTarget。Local Runtime 用于本地直连；Remote Runtime 直接调用服务器 API，从而获得团队共享连接、权限、审计和统一 AI 配置。UI 层不需要重写。
+这是非常值得支持的一种模式：Electron UI 可以切换 RuntimeTarget。Local Runtime 用于本地直连；Remote Runtime 直接调用服务器 API，从而使用个人服务器的数据库连接、命令规则、执行记录和模型配置。UI 层不需要重写。
 
 ## 10. 推荐代码仓库结构
 
 ```text
 apps/
-  web/                    # Vite React/Vue UI
+  web/                    # Vite React + shadcn/ui
   desktop/                # Electron main + preload + packaging
   server/                 # Hono/Fastify HTTP server
 packages/
-  ui/                     # shared UI components
+  ui/                     # shadcn/ui components and shared theme
   protocol/               # shared request/event types, zod schemas
   db-core/                # adapters, query runner, metadata
   db-postgres/
@@ -376,13 +415,13 @@ workers/
 
 | 类别 | 建议选型 | 优先级 |
 | --- | --- | --- |
-| UI | React + TypeScript + Vite + Monaco | P0 |
+| UI | React + TypeScript + Vite + shadcn/ui + Tailwind CSS + Monaco | P0 |
 | Desktop | Electron + contextBridge/IPC + electron-builder | P0 |
 | Server | Node.js + TypeScript + Hono 或 Fastify | P0 |
 | API | REST/JSON + SSE streaming | P0 |
 | DB | PostgreSQL(pg) + MySQL(mysql2) + SQLite(better-sqlite3) | P0 |
 | SSH | ssh2 | P0 |
-| AI | 原生 provider adapter；OpenAI-compatible API 起步 | P0 |
+| AI | 原生 DeepSeek Provider；模型地址、modelId、API Key 可配置 | P0 |
 | Agent | 自研轻量 tool loop + JSON Schema/Zod + approval gate | P0 |
 | 配置存储 | SQLite；服务端后续可 PostgreSQL | P0 |
 | Secret | safeStorage/keychain；服务端 AES/KMS/secret manager abstraction | P0 |
@@ -396,13 +435,15 @@ workers/
 
 2. 加入 Schema Explorer、metadata cache、SSH Tunnel、TLS、连接测试、查询取消和超时。
 
-3. 加入对话式数据库 Agent：Schema 检索 → 制定步骤 → 生成或修改 SQL → 分级授权与必要确认 → 查询或受控 DML/DDL → 解释实际结果。提供建议与执行两种模式。
+3. 加入工作区级数据库 Agent：发现授权连接 → 建立会话 → Schema 检索 → 制定步骤 → 生成或修改 SQL → 分级授权与必要确认 → 查询或受控 DML/DDL → 解释实际结果。提供建议与执行两种模式。
 
-4. 建立统一 SQL risk classifier、approval gate 与审计，区分查询、DML、DDL 和管理操作；人工与 AI 共用执行链。受控增删改和已验证 DDL 纳入 MVP，脚本、交互事务和管理能力逐项细化。
+4. 建立统一 SQL risk classifier、approval gate 与审计，区分查询、DML、DDL 和管理操作；人工与 AI 共用执行链。受控增删改、已验证 DDL、多命令计划与组确认纳入 MVP；无应用账号体系。
 
 5. 加入 Remote Runtime：桌面客户端可连接自托管 Server，Web/Desktop 完全共享 API types。
 
-6. 再做 MCP、团队 RBAC、数据脱敏、Arrow/Parquet、本地模型与 Python Worker。
+6. 后续按需增加 MongoDB、MiniMax/豆包/千问、MCP、Arrow/Parquet 或 Python Worker。团队账号和业务脱敏不是当前路线要求。
+
+Agent 方向先实现工具注册与执行器、连接发现与建立，再接入跨连接任务上下文、Schema 和 SQL 工具。验收应覆盖未打开表即可发起任务、连接本地或远端数据库、单任务访问多个授权连接、目标歧义追问、越权拒绝及取消后的租约释放。具体接口和任务顺序参见[总体技术架构设计](./AI数据库管理工具总体技术架构设计.md)第 7、11、12 节。
 
 ## 13. 最终建议
 

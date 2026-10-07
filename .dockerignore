@@ -1,0 +1,14 @@
+.git
+node_modules
+.pnpm-store
+dist
+.data
+*.db
+*.db-shm
+*.db-wal
+.env
+.env.*
+!.env.example
+.npmrc
+.playwright-cli
+output
